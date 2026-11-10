@@ -1,0 +1,10 @@
+node_modules/
+tests/out/
+.claude/
+.DS_Store
+
+# Never commit spreadsheets: real or sample data stays local.
+*.xlsx
+*.xlsm
+*.xls
+*.csv

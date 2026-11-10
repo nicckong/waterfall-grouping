@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waterfall Grouping</title>
+<script>
+/* Independent check: if the main code below was damaged while the file was moved, say so instead of doing nothing. */
+window.addEventListener('load', function () {
+  if (window.__WG_APP__) return;
+  var d = document.createElement('div');
+  d.setAttribute('role', 'alert');
+  d.style.cssText = 'margin:16px;padding:12px;border-radius:6px;background:#fbe9e9;color:#a12626;font:14px Arial,sans-serif';
+  d.textContent = 'This copy of the tool is damaged and cannot run: part of the file was changed while it was being moved. ' +
+    'Move the original file itself, e.g. as an email attachment or through a shared drive, rather than copying and pasting its text.';
+  document.body.insertBefore(d, document.body.firstChild);
+  var drop = document.getElementById('drop');
+  if (drop) drop.hidden = true;
+});
+</script>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f5f6f8; --panel: #ffffff; --ink: #1c2430; --muted: #5d6877; --line: #dde1e7; --head: #eef1f5; --head-2: #f6f7f9;
+  --accent: #1f5fa8; --accent-ink: #ffffff; --others: #fff4d6; --others-ink: #6b4e00; --warn-bg: #fdf1e3; --warn-ink: #8a4b08; --ok: #1b7a4b; --err-bg: #fbe9e9; --err-ink: #a12626;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14181e; --panel: #1c222a; --ink: #e7ebf0; --muted: #9aa5b3; --line: #313943; --head: #262d36; --head-2: #20262e;
+    --accent: #6ea8e8; --accent-ink: #0d1520; --others: #40351a; --others-ink: #f4d58a; --warn-bg: #3b2c18; --warn-ink: #f0c58c; --ok: #5ccf96; --err-bg: #3d2020; --err-ink: #f2a9a9;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 Arial, Helvetica, sans-serif; display: flex; flex-direction: column; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+h1 { font-size: 17px; margin: 0; }
+#fileName { color: var(--muted); overflow-wrap: anywhere; }
+.spacer { flex: 1; }
+button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 7px 12px; border-radius: 6px; cursor: pointer; display: inline-block; }
+button:hover:not(:disabled), .btn:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: bold; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#drop { margin: 40px auto; width: min(620px, calc(100% - 32px)); background: var(--panel); border: 2px dashed var(--line); border-radius: 12px; padding: 44px 24px; text-align: center; }
+#drop.over { border-color: var(--accent); }
+#drop h2 { margin: 0 0 6px; font-size: 18px; }
+#drop p { margin: 0 0 18px; color: var(--muted); }
+#drop small { display: block; margin-top: 18px; color: var(--muted); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+.msg { margin: 12px 16px 0; padding: 9px 12px; border-radius: 6px; }
+.msg.err { background: var(--err-bg); color: var(--err-ink); }
+.msg.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.msg ul { margin: 4px 0 0; padding-left: 18px; }
+
+main { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 12px; padding: 12px 16px 16px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-height: 0; display: flex; flex-direction: column; }
+.panel-head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.panel-head h2 { font-size: 14px; margin: 0; }
+.link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; }
+#picker { overflow: auto; padding: 4px 12px 12px; flex: 1; }
+.group { margin-top: 10px; }
+.group-title { font-weight: bold; display: flex; justify-content: space-between; gap: 8px; }
+.group-title span { font-weight: normal; color: var(--muted); font-size: 12px; }
+.group label { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0 3px 4px; cursor: pointer; }
+.group input { margin-top: 3px; accent-color: var(--accent); flex: none; }
+.group-note { font-size: 12px; color: var(--warn-ink); margin: 2px 0 0 4px; }
+.group.combine { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.group-hint { font-size: 12px; color: var(--muted); margin: 0 0 2px 4px; }
+
+#summary { padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--muted); }
+#summary b { color: var(--ink); }
+#check { font-weight: bold; color: var(--ok); }
+#check.bad { color: var(--warn-ink); }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+
+#tableWrap { overflow: auto; flex: 1; min-height: 240px; }
+table { border-collapse: separate; border-spacing: 0; font-size: 13px; }
+th, td { padding: 0 8px; height: 26px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; background: var(--panel); }
+thead th { position: sticky; z-index: 2; background: var(--head); font-weight: bold; }
+thead tr:nth-child(1) th { top: 0; text-align: left; }
+thead tr:nth-child(2) th { top: 26px; background: var(--head-2); }
+thead tr:nth-child(3) th { top: 52px; background: var(--head-2); font-size: 12px; padding: 0; }
+.sort-btn { font: inherit; font-weight: bold; color: inherit; background: none; border: 0; padding: 0 8px; height: 100%; width: 100%; cursor: pointer; white-space: nowrap; }
+.sort-btn:hover { text-decoration: underline; }
+.sort-btn .arrow { color: var(--accent); }
+.lbl { position: sticky; left: 0; z-index: 1; text-align: left; min-width: 230px; border-right: 1px solid var(--line); }
+thead .lbl { z-index: 3; }
+.b-start { border-left: 2px solid var(--line); }
+tr.root td, tr.parent td { font-weight: bold; }
+tr.parent td { background: var(--head-2); }
+tr.root td { background: var(--head); }
+tr.child .lbl, tr.others .lbl { padding-left: 20px; }
+tr.others td { background: var(--others); color: var(--others-ink); font-weight: bold; }
+tbody td.neg { background: #f8b4b4; color: #1c2430; }
+tbody td.pos { background: #a9ddb0; color: #1c2430; }
+
+@media (max-width: 800px) {
+  main { grid-template-columns: minmax(0, 1fr); }
+  #picker { max-height: 320px; }
+  .lbl { min-width: 150px; white-space: normal; }
+  body { height: auto; }
+  #tableWrap { max-height: 70vh; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Waterfall Grouping</h1>
+  <span id="fileName"></span>
+  <span class="spacer"></span>
+  <label class="btn" id="changeBtn" hidden for="fileInput2">Choose another file</label>
+  <button class="primary" id="exportBtn" hidden>Export to Excel</button>
+</header>
+<input class="visually-hidden" type="file" id="fileInput2" accept=".xlsx,.xlsm" tabindex="-1" aria-hidden="true">
+
+<div id="messages"></div>
+
+<section id="drop">
+  <h2>Upload your Excel file</h2>
+  <p>Drag it here, or choose it from your computer. Use an .xlsx file.</p>
+  <label class="btn" for="fileInput" style="background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:bold">Choose file</label>
+  <input class="visually-hidden" type="file" id="fileInput" accept=".xlsx,.xlsm">
+  <small>The file stays on this computer. Nothing is uploaded to a server.</small>
+</section>
+
+<main id="app" hidden>
+  <section class="panel" aria-label="Rows to group">
+    <div class="panel-head">
+      <h2>Rows to group into Others</h2>
+      <span class="spacer"></span>
+      <button class="link" id="clearBtn">Clear all</button>
+    </div>
+    <div id="picker"></div>
+  </section>
+  <section class="panel" aria-label="Result">
+    <div class="panel-head">
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <span class="spacer"></span>
+      <label>Show <select id="brandFilter"></select></label>
+    </div>
+    <div id="summary"></div>
+    <div id="tableWrap"><table id="table"></table></div>
+  </section>
+</main>
+
+<script>
+/*CORE*/
+</script>
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { buffer: null, wb: null, fileName: '', sheets: [], selected: new Set(), active: null, brand: 'all' };
+
+function el(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') n.className = v; else if (k in n) n[k] = v; else n.setAttribute(k, v);
+  }
+  n.append(...kids);
+  return n;
+}
+
+function showMessages(errors = [], warnings = []) {
+  const box = $('messages');
+  box.replaceChildren();
+  for (const e of errors) box.append(el('div', { class: 'msg err', role: 'alert' }, e));
+  if (warnings.length) {
+    const ul = el('ul');
+    warnings.forEach((w) => ul.append(el('li', {}, w)));
+    box.append(el('div', { class: 'msg warn' }, 'Please check:', ul));
+  }
+}
+
+/* The built-in Excel reader (ExcelJS) is stored compressed, in numbered parts at the end of this file.
+   It is unpacked when the page opens. If a part was lost or changed while the file was copied,
+   the page says which one instead of failing on every upload. */
+const ORIGINAL_SIZE = /*SIZE*/0, LIBRARY_PARTS = /*PARTS*/0;
+let libraryError = null;
+
+function crc32(text) {
+  let c, crc = 0xffffffff;
+  for (let i = 0; i < text.length; i++) {
+    c = (crc ^ text.charCodeAt(i)) & 0xff;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, '0');
+}
+
+const libraryReady = (async () => {
+  if (document.readyState === 'loading') await new Promise((r) => document.addEventListener('DOMContentLoaded', r));
+  const kb = (n) => Math.round(n / 1024).toLocaleString() + ' KB';
+  const sizes = ` (This copy is about ${kb(document.documentElement.outerHTML.length)}; the original is about ${kb(ORIGINAL_SIZE)}.)`;
+  const advice = ' Copy the whole file again. If pasting keeps cutting it short, move the file itself instead, e.g. as an email attachment or through a shared drive.';
+  const parts = new Map([...document.querySelectorAll('script[type="text/x-wg-part"]')].map((el) => [Number(el.dataset.part), el]));
+  const broken = [];
+  for (let i = 1; i <= LIBRARY_PARTS; i++) {
+    const el = parts.get(i);
+    if (!el) broken.push(`part ${i} of ${LIBRARY_PARTS} is missing`);
+    else if (crc32(el.textContent.replace(/\s+/g, '')) !== el.dataset.crc) broken.push(`part ${i} of ${LIBRARY_PARTS} was changed`);
+  }
+  if (broken.length) {
+    const cutShort = !parts.has(LIBRARY_PARTS); // the last part is gone: the paste stopped early
+    throw new Error((cutShort ? 'This copy of the tool is incomplete: the end of the file is missing, so it cannot read Excel files. '
+      : 'This copy of the tool cannot read Excel files because its built-in Excel reader is damaged. ') +
+      `In the Excel reader at the bottom of the file, ${broken.join(', ')}.` + sizes + advice);
+  }
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('This browser is too old to run the tool. Open the file in a current version of Chrome or Edge.');
+  }
+  const b64 = [...parts.keys()].sort((a, b) => a - b).map((i) => parts.get(i).textContent.replace(/\s+/g, '')).join('');
+  const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+  const code = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  const script = document.createElement('script');
+  script.textContent = code;
+  document.head.append(script);
+  if (typeof ExcelJS === 'undefined' || !ExcelJS.Workbook) {
+    throw new Error('This copy of the tool could not start its built-in Excel reader. Open the file directly in Chrome or Edge.' + sizes);
+  }
+})().catch((err) => {
+  libraryError = err.message;
+  showMessages([libraryError]);
+  $('drop').hidden = true;
+});
+
+async function loadFile(file) {
+  showMessages();
+  if (!file) return;
+  await libraryReady;
+  if (libraryError) { showMessages([libraryError]); return; }
+  if (!/\.(xlsx|xlsm)$/i.test(file.name)) {
+    showMessages([`"${file.name}" is not an .xlsx file. If it is an older .xls file, save it as .xlsx in Excel first.`]);
+    return;
+  }
+  try {
+    const buffer = await file.arrayBuffer();
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer.slice(0));
+    const sheets = [], skipped = [];
+    wb.eachSheet((ws) => {
+      const layout = GroupingCore.detectLayout(ws);
+      if (layout) sheets.push({ ws, layout }); else skipped.push(ws.name);
+    });
+    if (!sheets.length) {
+      showMessages(['No table found. The tool looks for a header row with Rank, Pro NPS, Det NPS and Pro-Det NPS, with the brand and period in the two rows above it.']);
+      return;
+    }
+    const warnings = [];
+    if (skipped.length) warnings.push(`No table found on: ${skipped.join(', ')}. These sheets are exported unchanged.`);
+    const stale = sheets.filter((s) => s.layout.uncalculated).map((s) => s.ws.name);
+    if (stale.length) {
+      showMessages([`Some formulas on ${stale.join(', ')} have no calculated values. Open the file in Excel, save it, and upload it again.`], warnings);
+      return;
+    }
+    if (!sheets.some((s) => s.layout.rows.some((r) => r.level === 'child'))) {
+      showMessages(["The table was found, but not which rows belong to which parent. Each parent row's Pro NPS and Det NPS should equal the sum of the rows under it. Otherwise, merge each group in the column left of the labels, make the parent labels bold, or use =SUM(...) in them."], warnings);
+      return;
+    }
+    Object.assign(state, { buffer, wb, fileName: file.name, sheets, selected: new Set(), combine: new Set(), sort: null, active: sheets[0].ws.name, brand: 'all', baseWarnings: warnings });
+    $('drop').hidden = true;
+    $('app').hidden = false;
+    $('changeBtn').hidden = false;
+    $('exportBtn').hidden = false;
+    $('fileName').textContent = file.name;
+    renderTabs(); renderBrandFilter(); renderPicker(); renderResult();
+  } catch (err) {
+    console.error(err);
+    showMessages([`Could not read "${file.name}". It may be damaged or password protected. (${err.message})`]);
+  }
+}
+
+/* Groups as they appear in the table: parent label -> driver labels, across all sheets. */
+function tableGroups() {
+  const groups = new Map();
+  for (const { layout } of state.sheets) {
+    for (const r of layout.rows) {
+      if (r.level !== 'child') continue;
+      if (!groups.has(r.parent)) groups.set(r.parent, []);
+      const list = groups.get(r.parent);
+      if (!list.includes(r.label)) list.push(r.label);
+    }
+  }
+  return groups;
+}
+
+/* Groups for the picker, with combined groups shown as one. Keys stay per original group. */
+function pickerGroups() {
+  const groups = tableGroups();
+  const parts = [...groups.keys()].filter((p) => state.combine.has(p));
+  const out = [];
+  for (const [parent, labels] of groups) {
+    const items = labels.map((label) => ({ label, key: GroupingCore.keyOf(parent, label) }));
+    if (parts.length >= 2 && parts.includes(parent)) {
+      if (parent === parts[0]) out.push({ title: parts.join(' & '), items: parts.flatMap((p) => groups.get(p).map((label) => ({ label, key: GroupingCore.keyOf(p, label) }))) });
+    } else out.push({ title: parent, items });
+  }
+  return out;
+}
+
+function renderPicker() {
+  const box = $('picker');
+  box.replaceChildren();
+
+  const combine = el('div', { class: 'group combine' });
+  combine.append(el('div', { class: 'group-title' }, 'Combine groups'), el('div', { class: 'group-hint' }, 'Tick two or more to merge them into one group.'));
+  for (const parent of tableGroups().keys()) {
+    const input = el('input', { type: 'checkbox', checked: state.combine.has(parent) });
+    input.addEventListener('change', () => {
+      if (input.checked) state.combine.add(parent); else state.combine.delete(parent);
+      renderPicker(); renderResult();
+    });
+    combine.append(el('label', {}, input, parent));
+  }
+  if (state.combine.size === 1) combine.append(el('div', { class: 'group-note' }, 'Tick at least one more group to combine.'));
+  box.append(combine);
+
+  for (const { title, items } of pickerGroups()) {
+    const ticked = items.filter((i) => state.selected.has(i.key)).length;
+    const g = el('div', { class: 'group' });
+    g.append(el('div', { class: 'group-title' }, title, el('span', {}, ticked ? `${ticked} of ${items.length}` : '')));
+    for (const { label, key } of items) {
+      const input = el('input', { type: 'checkbox', checked: state.selected.has(key) });
+      input.addEventListener('change', () => {
+        if (input.checked) state.selected.add(key); else state.selected.delete(key);
+        renderPicker(); renderResult();
+      });
+      g.append(el('label', {}, input, label));
+    }
+    if (ticked === 1) g.append(el('div', { class: 'group-note' }, 'Only one row ticked: this just renames it to Others.'));
+    if (ticked === items.length) g.append(el('div', { class: 'group-note' }, `All rows ticked: Others will equal ${title}.`));
+    box.append(g);
+  }
+}
+
+function renderTabs() {
+  const box = $('tabs');
+  box.replaceChildren();
+  for (const { ws } of state.sheets) {
+    const b = el('button', { type: 'button', role: 'tab' }, ws.name);
+    b.setAttribute('aria-selected', String(ws.name === state.active));
+    b.addEventListener('click', () => { state.active = ws.name; renderTabs(); renderBrandFilter(); renderResult(); });
+    box.append(b);
+  }
+}
+
+function currentSheet() { return state.sheets.find((s) => s.ws.name === state.active); }
+
+function renderBrandFilter() {
+  const sel = $('brandFilter');
+  sel.replaceChildren(el('option', { value: 'all' }, 'All brands'));
+  for (const b of currentSheet().layout.brands) sel.append(el('option', { value: b.name }, b.name));
+  if (![...sel.options].some((o) => o.value === state.brand)) state.brand = 'all';
+  sel.value = state.brand;
+}
+
+function fmt(v, metric) {
+  if (v === null || v === undefined) return '';
+  if (metric === 'rank') return String(Math.round(v));
+  const s = v.toFixed(1);
+  return s === '-0.0' ? '0.0' : s;
+}
+
+const METRIC_NAMES = { rank: 'Rank', pro: 'Pro NPS', det: 'Det NPS', net: 'Pro-Det NPS' };
+
+function renderResult() {
+  const { ws, layout } = currentSheet();
+  const { rows, plan } = GroupingCore.preview(ws, layout, state.selected, state.combine, state.sort);
+
+  const summary = $('summary');
+  summary.replaceChildren();
+  const srt = state.sort;
+  const sortNote = srt ? `Sorted within each group by ${srt.brand} / ${srt.period} / ${METRIC_NAMES[srt.metric]}, ${srt.dir === 'asc' ? 'lowest' : 'highest'} first. The export uses this order. Click the column again to reverse it, or a third time to undo.` : '';
+  if (!plan.active.length && !plan.combo) {
+    summary.append('Tick rows on the left to group them, or click a column heading to sort. The table below updates as you go.');
+    if (sortNote) summary.append(el('br'), sortNote);
+  } else {
+    if (sortNote) summary.append(sortNote, el('br'));
+    if (plan.combo) summary.append(el('b', {}, plan.combo.label), ` = ${plan.combo.parts.join(' + ')}`);
+    plan.active.forEach((g, i) => {
+      if (i || plan.combo) summary.append(el('br'));
+      const names = g.ticked.map((r) => layout.rows.find((x) => x.row === r).label).join(' + ');
+      summary.append(el('b', {}, g.label), ` = ${names}`);
+    });
+    const allIssues = state.sheets.flatMap((s) => GroupingCore.reconcile(s.layout, GroupingCore.preview(s.ws, s.layout, state.selected, state.combine, state.sort).rows).map((x) => ({ ...x, sheet: s.ws.name })));
+    summary.append(el('br'));
+    if (allIssues.length) {
+      const first = allIssues[0];
+      summary.append(el('span', { id: 'check', class: 'bad' }, `Drivers don't add up to the parent in ${allIssues.length} place(s), e.g. ${first.sheet} / ${first.brand} / ${first.period} / ${first.parent}: ${first.total} vs ${first.expected}.`));
+    } else {
+      summary.append(el('span', { id: 'check' }, 'Checked: drivers still add up to their parent row on every sheet.'));
+    }
+  }
+  showMessages([], state.baseWarnings);
+
+  const brands = layout.brands.filter((b) => state.brand === 'all' || b.name === state.brand);
+  const table = $('table');
+  const r1 = el('tr'), r2 = el('tr'), r3 = el('tr');
+  const corner = () => el('th', { class: 'lbl' });
+  r1.append(corner()); r2.append(corner()); r3.append(corner());
+  const columns = [];
+  for (const b of brands) {
+    const count = b.periods.reduce((a, p) => a + Object.keys(p.cols).length, 0);
+    r1.append(el('th', { colSpan: count, class: 'b-start' }, b.name));
+    b.periods.forEach((p, pi) => {
+      const metrics = Object.keys(p.cols).sort((x, y) => p.cols[x] - p.cols[y]);
+      r2.append(el('th', { colSpan: metrics.length, class: pi === 0 ? 'b-start' : '' }, p.name));
+      metrics.forEach((m, mi) => {
+        const start = pi === 0 && mi === 0;
+        // Click: best first (rank 1, or the highest value), then the reverse, then back to the original order.
+        // Rank chg counts places moved up, so for it higher is better too.
+        const on = state.sort && state.sort.brand === b.name && state.sort.period === p.name && state.sort.metric === m;
+        const first = m === 'rank' && !p.isChg ? 'asc' : 'desc';
+        const btn = el('button', { type: 'button', class: 'sort-btn', title: 'Sort drivers within each group' }, METRIC_NAMES[m],
+          on ? el('span', { class: 'arrow' }, state.sort.dir === 'asc' ? ' \u25B2' : ' \u25BC') : '');
+        btn.addEventListener('click', () => {
+          if (!on) state.sort = { brand: b.name, period: p.name, metric: m, dir: first };
+          else if (state.sort.dir === first) state.sort = { ...state.sort, dir: first === 'asc' ? 'desc' : 'asc' };
+          else state.sort = null;
+          renderResult();
+        });
+        const th = el('th', { class: start ? 'b-start' : '' }, btn);
+        if (on) th.setAttribute('aria-sort', state.sort.dir === 'asc' ? 'ascending' : 'descending');
+        r3.append(th);
+        columns.push({ col: p.cols[m], metric: m, start, isChg: p.isChg });
+      });
+    });
+  }
+  const tbody = el('tbody');
+  for (const row of rows) {
+    const tr = el('tr', { class: row.kind });
+    tr.append(el('td', { class: 'lbl' }, row.label));
+    for (const c of columns) {
+      const v = row.values[c.col];
+      const sign = c.isChg && typeof v === 'number' ? Math.sign(Math.round(v * 1e6)) : 0;
+      // Red is a worse move, green a better one. For Det NPS, a fall is the better move.
+      const good = c.metric === 'det' ? -sign : sign;
+      const cls = [c.start ? 'b-start' : '', good < 0 ? 'neg' : good > 0 ? 'pos' : ''].filter(Boolean).join(' ');
+      tr.append(el('td', { class: cls }, fmt(v, c.metric)));
+    }
+    tbody.append(tr);
+  }
+  table.replaceChildren(el('thead', {}, r1, r2, r3), tbody);
+}
+
+async function exportFile() {
+  const btn = $('exportBtn');
+  btn.disabled = true;
+  btn.textContent = 'Exporting...';
+  try {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(state.buffer.slice(0));
+    const warnings = GroupingCore.applyToWorkbook(wb, state.selected, state.combine, state.sort);
+    const out = await wb.xlsx.writeBuffer();
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = el('a', { href: URL.createObjectURL(blob), download: state.fileName.replace(/\.[^.]+$/, '') + '_grouped.xlsx' });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    showMessages([], [...state.baseWarnings, ...warnings]);
+  } catch (err) {
+    console.error(err);
+    showMessages([`Export failed: ${err.message}`], state.baseWarnings);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Export to Excel';
+  }
+}
+
+for (const id of ['fileInput', 'fileInput2']) {
+  $(id).addEventListener('change', (e) => { loadFile(e.target.files[0]); e.target.value = ''; });
+}
+$('exportBtn').addEventListener('click', exportFile);
+$('clearBtn').addEventListener('click', () => { state.selected.clear(); state.combine.clear(); renderPicker(); renderResult(); });
+$('brandFilter').addEventListener('change', (e) => { state.brand = e.target.value; renderResult(); });
+['dragover', 'dragenter'].forEach((t) => document.addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach((t) => document.addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.remove('over'); }));
+document.addEventListener('drop', (e) => loadFile(e.dataTransfer.files[0]));
+window.__WG_APP__ = true;
+</script>
+<!-- Built-in Excel reader: ExcelJS 4.4.0 (MIT licence, https://github.com/exceljs/exceljs), gzip-compressed and
+     base64-encoded so the file is smaller and safe to copy. Do not edit below this line. -->
+/*EXCELJS*/
+</body>
+</html>

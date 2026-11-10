@@ -1,0 +1,13 @@
+{
+  "name": "waterfall-grouping",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Single-file browser tool to group NPS driver rows into Others, combine groups, sort, and export back to Excel.",
+  "scripts": {
+    "build": "node build/build.js",
+    "test": "bash tests/run_all.sh"
+  },
+  "devDependencies": {
+    "exceljs": "4.4.0"
+  }
+}
