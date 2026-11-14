@@ -69,6 +69,13 @@ main { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minma
 .group-note { font-size: 12px; color: var(--warn-ink); margin: 2px 0 0 4px; }
 .group.combine { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 .group-hint { font-size: 12px; color: var(--muted); margin: 0 0 2px 4px; }
+.name-input { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); flex: 1; min-width: 0; }
+.grouping { margin: 4px 0 6px 4px; padding: 6px 8px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; background: var(--head-2); }
+.grouping.new { border-left-color: var(--others-ink); }
+.grouping-head { display: flex; gap: 6px; align-items: center; }
+.grouping-members { font-size: 12px; color: var(--muted); margin: 4px 0 2px; }
+.group label.grouping-pin, .group label.name-row { font-size: 12px; padding: 2px 0; align-items: center; }
+button.small { padding: 4px 10px; }
 
 #summary { padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--muted); }
 #summary b { color: var(--ink); }
@@ -131,7 +138,7 @@ tbody td.pos { background: #a9ddb0; color: #1c2430; }
 <main id="app" hidden>
   <section class="panel" aria-label="Rows to group">
     <div class="panel-head">
-      <h2>Rows to group into Others</h2>
+      <h2>Group rows</h2>
       <span class="spacer"></span>
       <button class="link" id="clearBtn">Clear all</button>
     </div>
@@ -153,7 +160,7 @@ tbody td.pos { background: #a9ddb0; color: #1c2430; }
 </script>
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { buffer: null, wb: null, fileName: '', sheets: [], selected: new Set(), active: null, brand: 'all' };
+const state = { buffer: null, wb: null, fileName: '', sheets: [], selected: new Set(), groups: [], combine: new Set(), comboName: '', sort: null, active: null, brand: 'all' };
 
 function el(tag, props = {}, ...kids) {
   const n = document.createElement(tag);
@@ -260,7 +267,7 @@ async function loadFile(file) {
       showMessages(["The table was found, but not which rows belong to which parent. Each parent row's Pro NPS and Det NPS should equal the sum of the rows under it. Otherwise, merge each group in the column left of the labels, make the parent labels bold, or use =SUM(...) in them."], warnings);
       return;
     }
-    Object.assign(state, { buffer, wb, fileName: file.name, sheets, selected: new Set(), combine: new Set(), sort: null, active: sheets[0].ws.name, brand: 'all', baseWarnings: warnings });
+    Object.assign(state, { buffer, wb, fileName: file.name, sheets, selected: new Set(), groups: [], combine: new Set(), comboName: '', sort: null, active: sheets[0].ws.name, brand: 'all', baseWarnings: warnings });
     $('drop').hidden = true;
     $('app').hidden = false;
     $('changeBtn').hidden = false;
@@ -295,10 +302,96 @@ function pickerGroups() {
   for (const [parent, labels] of groups) {
     const items = labels.map((label) => ({ label, key: GroupingCore.keyOf(parent, label) }));
     if (parts.length >= 2 && parts.includes(parent)) {
-      if (parent === parts[0]) out.push({ title: parts.join(' & '), items: parts.flatMap((p) => groups.get(p).map((label) => ({ label, key: GroupingCore.keyOf(p, label) }))) });
+      if (parent === parts[0]) out.push({ title: comboLabel(), items: parts.flatMap((p) => groups.get(p).map((label) => ({ label, key: GroupingCore.keyOf(p, label) }))) });
     } else out.push({ title: parent, items });
   }
   return out;
+}
+
+/* Named groupings: state.groups = [{ name, keys: [driver keys], pinLast }]. state.selected holds the ticked
+   drivers waiting to be grouped. A grouping must sit inside one group (or one combined group). */
+const norm = (s) => String(s).trim().toLowerCase();
+const comboParts = () => [...tableGroups().keys()].filter((p) => state.combine.has(p));
+const comboLabel = () => { const parts = comboParts(); return parts.length >= 2 ? (state.comboName.trim() || parts.join(' & ')) : null; };
+
+/* Names must be unique in the table, or rows (and the totals check) become ambiguous. */
+function takenNames(except) {
+  const names = new Set();
+  for (const { layout } of state.sheets) for (const r of layout.rows) names.add(norm(r.label));
+  for (const g of state.groups) names.add(norm(g.name));
+  const c = comboLabel();
+  if (c) names.add(norm(c));
+  if (except) names.delete(norm(except));
+  return names;
+}
+function checkName(name, except) {
+  const n = String(name).trim();
+  if (!n) return 'Type a name.';
+  if (takenNames(except).has(norm(n))) return `"${n}" is already used in the table. Pick a different name.`;
+  return null;
+}
+
+function driverLabels() {
+  const m = new Map();
+  for (const [parent, labels] of tableGroups()) for (const l of labels) m.set(GroupingCore.keyOf(parent, l), l);
+  return m;
+}
+
+function groupCard(g) {
+  const labels = driverLabels();
+  const card = el('div', { class: 'grouping' });
+  const note = el('div', { class: 'group-note' });
+  const name = el('input', { type: 'text', value: g.name, class: 'name-input', title: 'Rename this grouping' });
+  name.setAttribute('aria-label', 'Grouping name');
+  name.addEventListener('change', () => {
+    const err = checkName(name.value, g.name);
+    if (err) { note.textContent = err; name.value = g.name; return; }
+    g.name = name.value.trim();
+    renderPicker(); renderResult();
+  });
+  const ungroup = el('button', { type: 'button', class: 'link' }, 'Ungroup');
+  ungroup.addEventListener('click', () => { state.groups = state.groups.filter((x) => x !== g); renderPicker(); renderResult(); });
+  const pin = el('input', { type: 'checkbox', checked: g.pinLast });
+  pin.addEventListener('change', () => { g.pinLast = pin.checked; renderResult(); });
+  card.append(
+    el('div', { class: 'grouping-head' }, name, ungroup),
+    el('div', { class: 'grouping-members' }, g.keys.map((k) => labels.get(k) || k.split('\u0000')[1]).join(' + ')),
+    el('label', { class: 'grouping-pin' }, pin, 'Keep at the bottom'),
+    note,
+  );
+  const parents = [...new Set(g.keys.map((k) => k.split('\u0000')[0]))];
+  const parts = comboParts();
+  if (parents.length > 1 && !(parts.length >= 2 && parents.every((p) => parts.includes(p)))) {
+    card.append(el('div', { class: 'group-note' }, `Not applied: it mixes rows from ${parents.join(' and ')}. Combine those groups to use it, or ungroup it.`));
+  }
+  return card;
+}
+
+function groupForm(title, picked) {
+  const form = el('div', { class: 'grouping new' });
+  let suggestion = `${title} - Others`;
+  for (let n = 2; takenNames().has(norm(suggestion)); n++) suggestion = `${title} - Others ${n}`;
+  const name = el('input', { type: 'text', value: suggestion, class: 'name-input' });
+  name.setAttribute('aria-label', 'Name for the new grouping');
+  // "Keep at the bottom" follows the name (on for "... Others") until the user sets it.
+  const pin = el('input', { type: 'checkbox', checked: /others/i.test(suggestion) });
+  let pinTouched = false;
+  pin.addEventListener('change', () => { pinTouched = true; });
+  name.addEventListener('input', () => { if (!pinTouched) pin.checked = /others/i.test(name.value); });
+  const note = el('div', { class: 'group-note' });
+  const btn = el('button', { type: 'button', class: 'primary small' }, `Group ${picked.length} row${picked.length > 1 ? 's' : ''}`);
+  const create = () => {
+    const err = checkName(name.value);
+    if (err) { note.textContent = err; return; }
+    state.groups.push({ name: name.value.trim(), keys: picked.map((p) => p.key), pinLast: pin.checked });
+    picked.forEach((p) => state.selected.delete(p.key));
+    renderPicker(); renderResult();
+  };
+  btn.addEventListener('click', create);
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
+  form.append(el('div', { class: 'grouping-head' }, name, btn), el('label', { class: 'grouping-pin' }, pin, 'Keep at the bottom'), note);
+  if (picked.length === 1) form.append(el('div', { class: 'group-hint' }, 'One row: grouping it just renames it.'));
+  return form;
 }
 
 function renderPicker() {
@@ -316,23 +409,45 @@ function renderPicker() {
     combine.append(el('label', {}, input, parent));
   }
   if (state.combine.size === 1) combine.append(el('div', { class: 'group-note' }, 'Tick at least one more group to combine.'));
+  const parts = comboParts();
+  if (parts.length >= 2) {
+    const auto = parts.join(' & ');
+    const note = el('div', { class: 'group-note' });
+    const name = el('input', { type: 'text', value: comboLabel(), class: 'name-input' });
+    name.setAttribute('aria-label', 'Name of the combined group');
+    name.addEventListener('change', () => {
+      const v = name.value.trim();
+      if (!v || v === auto) state.comboName = '';
+      else {
+        const err = checkName(v, comboLabel());
+        if (err) { note.textContent = err; name.value = comboLabel(); return; }
+        state.comboName = v;
+      }
+      renderPicker(); renderResult();
+    });
+    combine.append(el('label', { class: 'name-row' }, 'Name', name), note);
+  }
   box.append(combine);
 
+  box.append(el('div', { class: 'group-hint', style: 'margin-top:10px' }, 'Tick rows in a group, name them, then click Group.'));
+  const groupedKey = new Map();
+  for (const g of state.groups) for (const k of g.keys) if (!groupedKey.has(k)) groupedKey.set(k, g);
   for (const { title, items } of pickerGroups()) {
-    const ticked = items.filter((i) => state.selected.has(i.key)).length;
-    const g = el('div', { class: 'group' });
-    g.append(el('div', { class: 'group-title' }, title, el('span', {}, ticked ? `${ticked} of ${items.length}` : '')));
+    const blk = el('div', { class: 'group' });
+    const keys = new Set(items.map((i) => i.key));
+    const n = state.groups.filter((g) => g.keys.some((k) => keys.has(k))).length;
+    blk.append(el('div', { class: 'group-title' }, title, el('span', {}, n ? `${n} grouping${n > 1 ? 's' : ''}` : '')));
+    const shown = new Set();
     for (const { label, key } of items) {
+      const g = groupedKey.get(key);
+      if (g) { if (!shown.has(g)) { shown.add(g); blk.append(groupCard(g)); } continue; }
       const input = el('input', { type: 'checkbox', checked: state.selected.has(key) });
-      input.addEventListener('change', () => {
-        if (input.checked) state.selected.add(key); else state.selected.delete(key);
-        renderPicker(); renderResult();
-      });
-      g.append(el('label', {}, input, label));
+      input.addEventListener('change', () => { if (input.checked) state.selected.add(key); else state.selected.delete(key); renderPicker(); });
+      blk.append(el('label', {}, input, label));
     }
-    if (ticked === 1) g.append(el('div', { class: 'group-note' }, 'Only one row ticked: this just renames it to Others.'));
-    if (ticked === items.length) g.append(el('div', { class: 'group-note' }, `All rows ticked: Others will equal ${title}.`));
-    box.append(g);
+    const picked = items.filter((i) => state.selected.has(i.key) && !groupedKey.has(i.key));
+    if (picked.length) blk.append(groupForm(title, picked));
+    box.append(blk);
   }
 }
 
@@ -368,14 +483,14 @@ const METRIC_NAMES = { rank: 'Rank', pro: 'Pro NPS', det: 'Det NPS', net: 'Pro-D
 
 function renderResult() {
   const { ws, layout } = currentSheet();
-  const { rows, plan } = GroupingCore.preview(ws, layout, state.selected, state.combine, state.sort);
+  const { rows, plan } = GroupingCore.preview(ws, layout, state.groups, state.combine, state.sort, state.comboName);
 
   const summary = $('summary');
   summary.replaceChildren();
   const srt = state.sort;
   const sortNote = srt ? `Sorted within each group by ${srt.brand} / ${srt.period} / ${METRIC_NAMES[srt.metric]}, ${srt.dir === 'asc' ? 'lowest' : 'highest'} first. The export uses this order. Click the column again to reverse it, or a third time to undo.` : '';
   if (!plan.active.length && !plan.combo) {
-    summary.append('Tick rows on the left to group them, or click a column heading to sort. The table below updates as you go.');
+    summary.append('Tick rows on the left and name them to group them, or click a column heading to sort. The table below updates as you go.');
     if (sortNote) summary.append(el('br'), sortNote);
   } else {
     if (sortNote) summary.append(sortNote, el('br'));
@@ -385,7 +500,8 @@ function renderResult() {
       const names = g.ticked.map((r) => layout.rows.find((x) => x.row === r).label).join(' + ');
       summary.append(el('b', {}, g.label), ` = ${names}`);
     });
-    const allIssues = state.sheets.flatMap((s) => GroupingCore.reconcile(s.layout, GroupingCore.preview(s.ws, s.layout, state.selected, state.combine, state.sort).rows).map((x) => ({ ...x, sheet: s.ws.name })));
+    if (plan.skipped.length) summary.append(el('br'), el('span', { class: 'bad', id: 'skipped' }, `Not applied (mixes rows from different groups): ${plan.skipped.join(', ')}.`));
+    const allIssues = state.sheets.flatMap((s) => GroupingCore.reconcile(s.layout, GroupingCore.preview(s.ws, s.layout, state.groups, state.combine, state.sort, state.comboName).rows).map((x) => ({ ...x, sheet: s.ws.name })));
     summary.append(el('br'));
     if (allIssues.length) {
       const first = allIssues[0];
@@ -453,7 +569,7 @@ async function exportFile() {
   try {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(state.buffer.slice(0));
-    const warnings = GroupingCore.applyToWorkbook(wb, state.selected, state.combine, state.sort);
+    const warnings = GroupingCore.applyToWorkbook(wb, state.groups, state.combine, state.sort, state.comboName);
     const out = await wb.xlsx.writeBuffer();
     const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const a = el('a', { href: URL.createObjectURL(blob), download: state.fileName.replace(/\.[^.]+$/, '') + '_grouped.xlsx' });
@@ -473,7 +589,7 @@ for (const id of ['fileInput', 'fileInput2']) {
   $(id).addEventListener('change', (e) => { loadFile(e.target.files[0]); e.target.value = ''; });
 }
 $('exportBtn').addEventListener('click', exportFile);
-$('clearBtn').addEventListener('click', () => { state.selected.clear(); state.combine.clear(); renderPicker(); renderResult(); });
+$('clearBtn').addEventListener('click', () => { state.selected.clear(); state.groups = []; state.combine.clear(); state.comboName = ''; renderPicker(); renderResult(); });
 $('brandFilter').addEventListener('change', (e) => { state.brand = e.target.value; renderResult(); });
 ['dragover', 'dragenter'].forEach((t) => document.addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.add('over'); }));
 ['dragleave', 'drop'].forEach((t) => document.addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.remove('over'); }));

@@ -185,76 +185,90 @@ const GroupingCore = (() => {
     return (p && p.cols[sort.metric]) || null;
   }
 
-  function buildPlan(ws, layout, selected, combine = new Set(), sort = null) {
-    // Combined groups: one parent row ("Journey & Product") where the first of them was, with all their drivers under it.
+  /* Works out the new row order.
+     groupings: [{ name, keys: [keyOf(parent, driver)], pinLast }]. Each named grouping becomes one row, placed
+       where its first driver was (or at the bottom of its parent if pinLast), and must sit inside one parent.
+       A grouping whose drivers span parents that are not combined is skipped (listed in plan.skipped).
+     combine: parent labels to merge into one group, named comboName (default "Journey & Product").
+     sort: drivers and groupings are sorted within their parent; pinned groupings stay last. */
+  function buildPlan(ws, layout, groupings = [], combine = new Set(), sort = null, comboName = '') {
     const comboParents = layout.rows.filter((x) => x.level === 'parent' && combine.has(x.label));
     const combo = comboParents.length >= 2
-      ? { combo: true, label: comboParents.map((p) => p.label).join(' & '), parts: comboParents.map((p) => p.label), ticked: comboParents.map((p) => p.row) }
+      ? { combo: true, label: String(comboName || '').trim() || comboParents.map((p) => p.label).join(' & '),
+          parts: comboParents.map((p) => p.label), ticked: comboParents.map((p) => p.row) }
       : null;
     const inCombo = new Set(combo ? combo.ticked : []);
+    const info = new Map(layout.rows.map((x) => [x.row, x]));
     const kidsOf = new Map();
     for (const x of layout.rows) {
       if (x.level !== 'child') continue;
       if (!kidsOf.has(x.parentRow)) kidsOf.set(x.parentRow, []);
       kidsOf.get(x.parentRow).push(x);
     }
-    const moved = new Set(combo ? comboParents.flatMap((p) => (kidsOf.get(p.row) || []).map((k) => k.row)) : []);
+    const blockOf = (x) => (inCombo.has(x.parentRow) ? 'combo' : x.parentRow);
     const parentLabelOf = (x) => (inCombo.has(x.parentRow) ? combo.label : x.parent);
 
-    // Sorting: drivers are reordered within their group only; groups, Overall and other rows stay put.
+    // Named groupings that apply on this sheet.
+    const byKey = new Map(layout.rows.filter((x) => x.level === 'child').map((x) => [keyOf(x.parent, x.label), x]));
+    const active = [], skipped = [], groupOf = new Map();
+    for (const def of groupings) {
+      const members = [...new Set(def.keys)].map((k) => byKey.get(k)).filter((x) => x && !groupOf.has(x.row)).sort((p, q) => p.row - q.row);
+      if (!members.length) continue;
+      if (new Set(members.map(blockOf)).size > 1) { skipped.push(def.name); continue; }
+      const g = { label: String(def.name).trim(), parent: parentLabelOf(members[0]), ticked: members.map((m) => m.row), pinLast: !!def.pinLast };
+      active.push(g);
+      for (const m of members) groupOf.set(m.row, g);
+    }
+
+    // Sorting: drivers and (unpinned) groupings are reordered within their parent only.
     const sortCol = sortColumn(layout, sort);
-    const sortKids = (kids) => {
-      if (!sortCol) return kids;
-      const key = (k) => { const v = num(ws.getCell(k.row, sortCol)); return v === null ? null : Math.round(v * 1e9); };
-      return kids.map((k, i) => ({ k, i, v: key(k) })).sort((a, b) =>
-        (a.v === null) - (b.v === null) || (a.v === null || a.v === b.v ? 0 : sort.dir === 'asc' ? a.v - b.v : b.v - a.v) || a.i - b.i,
-      ).map((o) => o.k);
+    const valueOf = (u) => (u.group ? computeOthers(ws, layout, { ...u.group, newRow: 0 }).values[sortCol] : num(ws.getCell(u.old, sortCol)));
+    const unitsFor = (kids) => {
+      let units = [];
+      const seen = new Set();
+      for (const k of kids) {
+        const g = groupOf.get(k.row);
+        if (!g) units.push({ old: k.row });
+        else if (!g.pinLast && !seen.has(g)) { seen.add(g); units.push({ group: g }); }
+      }
+      if (sortCol) {
+        const key = (u) => { const v = valueOf(u); return v === null || v === undefined ? null : Math.round(v * 1e9); };
+        units = units.map((u, i) => ({ u, i, v: key(u) })).sort((a, b) =>
+          (a.v === null) - (b.v === null) || (a.v === null || a.v === b.v ? 0 : sort.dir === 'asc' ? a.v - b.v : b.v - a.v) || a.i - b.i,
+        ).map((o) => o.u);
+      }
+      const pinned = active.filter((g) => g.pinLast && kids.some((k) => groupOf.get(k.row) === g));
+      return [...units, ...pinned.map((g) => ({ group: g }))];
     };
-    const info = new Map(layout.rows.map((x) => [x.row, x]));
-    const seq = [], placed = new Set();
+
+    // Each parent (or the combined parent) is followed by its block of drivers and groupings.
+    const underParent = new Set([...kidsOf.values()].flat().map((k) => k.row));
+    const seq = [];
     for (let r = 1; r <= ws.rowCount; r++) {
       if (combo && r === combo.ticked[0]) {
-        seq.push({ combo });
-        for (const k of sortKids(comboParents.flatMap((p) => kidsOf.get(p.row) || []))) seq.push({ old: k.row });
-      } else if (!inCombo.has(r) && !moved.has(r) && !placed.has(r)) {
+        seq.push({ combo }, ...unitsFor(comboParents.flatMap((p) => kidsOf.get(p.row) || [])));
+      } else if (!inCombo.has(r) && !underParent.has(r)) {
         seq.push({ old: r });
-        const x = info.get(r);
-        if (sortCol && x && x.level === 'parent') {
-          for (const k of sortKids(kidsOf.get(r) || [])) { seq.push({ old: k.row }); placed.add(k.row); }
-        }
+        if (kidsOf.has(r) && info.get(r)?.level === 'parent') seq.push(...unitsFor(kidsOf.get(r)));
       }
     }
 
-    // Ticked drivers collapse to one Others row after the last driver of their (possibly combined) group.
-    const groups = new Map();
-    seq.forEach((e, i) => {
-      const x = e.old && info.get(e.old);
-      if (!x || x.level !== 'child') return;
-      const id = inCombo.has(x.parentRow) ? 'combo' : x.parentRow;
-      if (!groups.has(id)) groups.set(id, { parent: parentLabelOf(x), ticked: [], lastIndex: i });
-      const g = groups.get(id);
-      g.lastIndex = i;
-      if (selected.has(keyOf(x.parent, x.label))) g.ticked.push(x.row);
-    });
-    const active = [...groups.values()].filter((g) => g.ticked.length);
-    const ticked = new Set(active.flatMap((g) => g.ticked));
-    const lastAt = new Map(active.map((g) => [g.lastIndex, g]));
-
     const order = [], map = {};
-    seq.forEach((e, i) => {
-      if (e.combo) { order.push(e); combo.newRow = order.length; }
-      else if (!ticked.has(e.old)) { order.push(e); map[e.old] = order.length; }
-      const g = lastAt.get(i);
-      if (g) { order.push({ group: g }); g.newRow = order.length; }
-    });
-    for (const g of active) { g.label = g.parent + ' - Others'; for (const r of g.ticked) map[r] = g.newRow; }
-    if (combo) {
-      for (const r of combo.ticked) map[r] = combo.newRow;
-      combo.endRow = Math.max(combo.newRow, ...[...moved].map((r) => map[r]));
+    for (const e of seq) {
+      order.push(e);
+      if (e.combo) combo.newRow = order.length;
+      else if (e.group) e.group.newRow = order.length;
+      else map[e.old] = order.length;
     }
-    const removed = new Set([...ticked, ...inCombo]);
+    for (const g of active) for (const r of g.ticked) map[r] = g.newRow;
+    if (combo) {
+      const blockRows = comboParents.flatMap((p) => (kidsOf.get(p.row) || []).map((k) => map[k.row]));
+      combo.endRow = Math.max(combo.newRow, ...blockRows);
+      for (const r of combo.ticked) map[r] = combo.newRow;
+    }
+    const removed = new Set([...groupOf.keys(), ...inCombo]);
     const maxRow = ws.rowCount, delta = order.length - maxRow;
-    return { order, map, active, combo, removed, maxRow, parentLabelOf, mapRow: (r) => map[r] ?? r + delta };
+    return { order, map, active, skipped, combo, removed, maxRow, parentLabelOf, mapRow: (r) => map[r] ?? r + delta };
   }
 
   /* Pro and Det are summed; Pro-Det and chg follow from them; Rank is redone across brands. */
@@ -300,13 +314,13 @@ const GroupingCore = (() => {
   }
 
   /* The result table for the screen: read-only, the worksheet is not changed. */
-  function preview(ws, layout, selected, combine, sort) {
-    const plan = buildPlan(ws, layout, selected, combine, sort);
+  function preview(ws, layout, groupings, combine, sort, comboName) {
+    const plan = buildPlan(ws, layout, groupings, combine, sort, comboName);
     const info = new Map(layout.rows.map((x) => [x.row, x]));
     const rows = [];
     for (const e of plan.order) {
       if (e.group) {
-        rows.push({ kind: 'others', label: e.group.label, values: computeOthers(ws, layout, e.group).values, parent: e.group.parent });
+        rows.push({ kind: 'others', label: e.group.label, values: computeOthers(ws, layout, e.group).values, parent: e.group.parent, pinLast: e.group.pinLast });
       } else if (e.combo) {
         rows.push({ kind: 'parent', label: e.combo.label, values: computeOthers(ws, layout, e.combo).values, combined: true });
       } else if (info.has(e.old)) {
@@ -408,17 +422,18 @@ const GroupingCore = (() => {
   }
 
   /* Applies the grouping to a loaded workbook, in place. Returns any warnings. */
-  function applyToWorkbook(wb, selected, combine = new Set(), sort = null) {
+  function applyToWorkbook(wb, groupings = [], combine = new Set(), sort = null, comboName = '') {
     const warnings = [];
     const layouts = new Map(), plans = new Map();
     wb.eachSheet((ws) => {
       const layout = detectLayout(ws);
-      if (layout) { layouts.set(ws.name, layout); plans.set(ws.name, buildPlan(ws, layout, selected, combine, sort)); }
+      if (layout) { layouts.set(ws.name, layout); plans.set(ws.name, buildPlan(ws, layout, groupings, combine, sort, comboName)); }
     });
     wb.eachSheet((ws) => {
       const plan = plans.get(ws.name);
       if (!plan) return;
       const layout = layouts.get(ws.name);
+      for (const name of plan.skipped) warnings.push(`${ws.name}: grouping "${name}" mixes drivers from different groups, so it was not applied. Combine those groups first.`);
       const others = new Map([...plan.active, ...(plan.combo ? [plan.combo] : [])].map((g) => [g, computeOthers(ws, layout, g)]));
       const onSingleRef = (ref) => warnings.push(`${ws.name}: a formula refers directly to grouped cell ${ref}. Check this formula in the export.`);
       const isKept = (r) => !plan.removed.has(r);

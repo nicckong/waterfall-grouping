@@ -1,30 +1,37 @@
 # Waterfall Grouping
 
 A single-file browser tool for NPS driver tables. Upload an Excel file, group driver rows into
-"Others", combine groups, sort within groups, and export the result back to Excel with formulas,
+named rows (such as "Others"), combine groups, sort within groups, and export the result back to Excel with formulas,
 formatting and colours intact.
 
 Everything runs inside your browser. The Excel file is never uploaded anywhere.
 
 ## Using it
 
+You only need one file, `waterfall_grouping.html`. No npm, no install, no internet connection.
+
 1. Download the repository as a zip (green **Code** button, then **Download ZIP**) and unzip it.
 2. Open `waterfall_grouping.html` in a current version of Chrome or Edge.
 3. Choose your `.xlsx` file, or drag it onto the page.
 
-That one HTML file is the whole tool. You can copy it anywhere; it does not need the other files in
-this repository and does not need an internet connection.
+Or open `waterfall_grouping.html` in the file list above and use **Download raw file**. That one HTML
+file is the whole tool; the other files in this repository are only for changing it.
 
 ### What it does
 
-- **Group into Others:** tick drivers within a group (e.g. Product Fit and Product Range under
-  Product) and they become one row, "Product - Others". Pro NPS and Det NPS are summed, Pro-Det NPS
-  and chg are recalculated, and Rank is redone across all brands. Tied scores share a rank (2, 2, 4).
+- **Named groupings:** tick drivers within a group, type a name and click **Group**. The drivers
+  become one row with that name (the suggested name is "<Group> - Others"). Pro NPS and Det NPS are
+  summed, Pro-Det NPS and chg are recalculated, and Rank is redone across all brands. Tied scores
+  share a rank (2, 2, 4). A group can have several groupings; each can be renamed or ungrouped.
+  A grouping takes the place of its first driver, or stays at the bottom of its group if
+  **Keep at the bottom** is ticked (on by default for names containing "Others").
 - **Combine groups:** tick two or more groups (e.g. Journey and Product) to merge them into one
-  group, "Journey & Product", with all their drivers underneath.
-- **Sort:** click a column heading to sort drivers within each group (best first, then reversed,
-  then back to the original order). Groups stay in place, and an Others row stays last. The export
-  uses the sorted order.
+  group with all their drivers underneath. It is named "Journey & Product" unless you type a name.
+  Groupings can then take drivers from any of the combined groups.
+- **Sort:** click a column heading to sort drivers and groupings within each group (best first,
+  then reversed, then back to the original order). Groups stay in place, and groupings kept at the
+  bottom stay last. The export uses the sorted order.
+- **Names are unique:** a grouping or combined group can't reuse a name already in the table.
 - **Export:** a new `.xlsx` with formulas kept live, column A merges adjusted, and chg columns
   coloured flat red/green (reversed for Det NPS, where a fall is good). Every sheet in the file is
   processed the same way.
